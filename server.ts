@@ -218,6 +218,24 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
       ];
     }
 
+    // Ensure all timestamps are strictly valid within [0, durationSec]
+    const sanitizedClips = generatedClips.map((c: any, index: number) => {
+      let start = typeof c.startTimestamp === 'number' && !isNaN(c.startTimestamp) ? Math.max(0, c.startTimestamp) : Math.floor(durationSec * (index * 0.2));
+      if (start >= durationSec) start = Math.max(0, durationSec - 5);
+      let end = typeof c.endTimestamp === 'number' && !isNaN(c.endTimestamp) ? c.endTimestamp : start + 25;
+      if (end <= start) end = Math.min(durationSec, start + 15);
+      if (end > durationSec) end = durationSec;
+      if (end <= start) {
+        start = 0;
+        end = Math.max(1, durationSec);
+      }
+      return {
+        ...c,
+        startTimestamp: Math.floor(start),
+        endTimestamp: Math.ceil(end),
+      };
+    });
+
     res.json({
       success: true,
       analysis: {
@@ -227,7 +245,7 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
         pauseCount: Math.max(2, Math.round(durationSec / 25)),
         emotionSpikes: ['00:15', '00:42', '01:20'],
       },
-      clips: generatedClips,
+      clips: sanitizedClips,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'Processing failed' });

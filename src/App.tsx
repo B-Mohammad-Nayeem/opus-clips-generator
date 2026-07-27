@@ -35,13 +35,16 @@ export default function App() {
     file: File | null,
     sampleProj: VideoProject | null,
     targetDuration: string,
-    customPrompt: string
+    customPrompt: string,
+    fileDuration?: number
   ) => {
     let title = file ? file.name.replace(/\.[^/.]+$/, '') : sampleProj?.title || 'Uploaded Video';
-    let duration = sampleProj ? sampleProj.duration : 180;
-    let videoUrl = sampleProj
-      ? sampleProj.videoUrl
-      : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
+    let duration = fileDuration || (sampleProj ? sampleProj.duration : 180);
+    let blobUrl = file ? URL.createObjectURL(file) : null;
+    let videoUrl =
+      blobUrl ||
+      sampleProj?.videoUrl ||
+      'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
     if (file) {
       try {
@@ -52,7 +55,7 @@ export default function App() {
           body: formData,
         });
         const data = await res.json();
-        if (data.videoUrl) {
+        if (data.videoUrl && !blobUrl) {
           videoUrl = data.videoUrl;
         }
       } catch (err) {
@@ -79,50 +82,74 @@ export default function App() {
 
       if (apiData.clips && Array.isArray(apiData.clips)) {
         // Construct full project
-        const newClips: Clip[] = apiData.clips.map((c: any, index: number) => ({
-          id: `clip-${Date.now()}-${index}`,
-          videoId: `proj-${Date.now()}`,
-          title: c.title || `Viral Clip #${index + 1}`,
-          summary: c.summary || 'AI identified moment',
-          durationOption: (targetDuration as any) || '30s',
-          startTimestamp: c.startTimestamp || 10 * index,
-          endTimestamp: c.endTimestamp || 10 * index + 30,
-          duration: (c.endTimestamp || 30) - (c.startTimestamp || 0),
-          viralScore: c.viralScore || 92,
-          hookScore: c.hookScore || 90,
-          engagementScore: c.engagementScore || 91,
-          category: c.category || 'Controversial',
-          selectionReasoning: c.selectionReasoning || 'Strong vocal hook',
-          keywords: c.keywords || ['AI', 'Shorts'],
-          hashtags: c.hashtags || ['#viral', '#shorts'],
-          reframing: {
-            targetAspect: '9:16',
-            mode: 'auto-track',
-            faceCoordinates: { xPercent: 50, yPercent: 40, zoom: 1.4 },
-          },
-          captionStyle: {
-            presetName: 'Alex Hormozi',
-            fontFamily: 'Montserrat',
-            fontSize: 28,
-            activeWordColor: '#facc15',
-            textColor: '#ffffff',
-            strokeColor: '#000000',
-            textPosition: 'bottom',
-            animationType: 'pop',
-            showEmojis: true,
-            maxWordsPerLine: 3,
-          },
-          brandAssets: {
-            logoPosition: 'top-right',
-            logoOpacity: 0.85,
-            logoSize: 18,
-            watermarkText: '@OpusClipAI',
-          },
-          transcriptWords: sampleProj?.clips[0]?.transcriptWords || [
-            { word: 'Check out', start: 0, end: 0.5, speaker: 'Speaker 1', confidence: 0.99 },
-            { word: 'this viral moment!', start: 0.6, end: 1.5, speaker: 'Speaker 1', confidence: 0.99, isKeyWord: true, emoji: '🔥' },
-          ],
-        }));
+        const newClips: Clip[] = apiData.clips.map((c: any, index: number) => {
+          const clipStart =
+            typeof c.startTimestamp === 'number'
+              ? c.startTimestamp
+              : Math.floor(duration * (index * 0.2));
+          const clipEnd =
+            typeof c.endTimestamp === 'number'
+              ? c.endTimestamp
+              : Math.min(duration, clipStart + 30);
+          const clipDur = Math.max(5, clipEnd - clipStart);
+
+          // Generate animated kinetic words for the uploaded clip
+          const quote =
+            c.sampleQuote || c.title || 'Check out this amazing viral moment!';
+          const words = quote.split(/\s+/).filter(Boolean);
+          const wordStep = clipDur / Math.max(1, words.length);
+
+          const generatedWords = words.map((w: string, wIdx: number) => ({
+            word: w,
+            start: Math.round(wIdx * wordStep * 10) / 10,
+            end: Math.round((wIdx + 1) * wordStep * 10) / 10,
+            speaker: 'Speaker 1',
+            confidence: 0.99,
+            emoji: wIdx === words.length - 1 ? '🔥' : wIdx === 0 ? '⚡' : undefined,
+          }));
+
+          return {
+            id: `clip-${Date.now()}-${index}`,
+            videoId: `proj-${Date.now()}`,
+            title: c.title || `Viral Clip #${index + 1}`,
+            summary: c.summary || 'AI identified moment',
+            durationOption: (targetDuration as any) || '30s',
+            startTimestamp: clipStart,
+            endTimestamp: clipEnd,
+            duration: clipDur,
+            viralScore: c.viralScore || 92,
+            hookScore: c.hookScore || 90,
+            engagementScore: c.engagementScore || 91,
+            category: c.category || 'Controversial',
+            selectionReasoning: c.selectionReasoning || 'Strong vocal hook',
+            keywords: c.keywords || ['AI', 'Shorts'],
+            hashtags: c.hashtags || ['#viral', '#shorts'],
+            reframing: {
+              targetAspect: '9:16',
+              mode: 'auto-track',
+              faceCoordinates: { xPercent: 50, yPercent: 40, zoom: 1.4 },
+            },
+            captionStyle: {
+              presetName: 'Alex Hormozi',
+              fontFamily: 'Montserrat',
+              fontSize: 28,
+              activeWordColor: '#facc15',
+              textColor: '#ffffff',
+              strokeColor: '#000000',
+              textPosition: 'bottom',
+              animationType: 'pop',
+              showEmojis: true,
+              maxWordsPerLine: 3,
+            },
+            brandAssets: {
+              logoPosition: 'top-right',
+              logoOpacity: 0.85,
+              logoSize: 18,
+              watermarkText: '@OpusClipAI',
+            },
+            transcriptWords: generatedWords,
+          };
+        });
 
         const newProj: VideoProject = {
           id: `proj-${Date.now()}`,

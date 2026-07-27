@@ -22,7 +22,8 @@ interface UploadSectionProps {
     file: File | null,
     sampleProj: VideoProject | null,
     targetDuration: string,
-    customPrompt: string
+    customPrompt: string,
+    fileDuration?: number
   ) => void;
   onSelectSample: (proj: VideoProject) => void;
 }
@@ -33,6 +34,7 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
 }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [fileDuration, setFileDuration] = useState<number | null>(null);
   const [selectedSample, setSelectedSample] = useState<VideoProject | null>(SAMPLE_VIDEOS[0]);
   const [dragActive, setDragActive] = useState(false);
   const [targetDuration, setTargetDuration] = useState<string>('30s');
@@ -61,6 +63,16 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
     setSelectedSample(null);
     const url = URL.createObjectURL(file);
     setPreviewUrl(url);
+
+    // Detect actual duration from video file
+    const tempVideo = document.createElement('video');
+    tempVideo.preload = 'metadata';
+    tempVideo.src = url;
+    tempVideo.onloadedmetadata = () => {
+      if (tempVideo.duration && !isNaN(tempVideo.duration) && tempVideo.duration > 0) {
+        setFileDuration(Math.round(tempVideo.duration));
+      }
+    };
 
     // Simulate direct upload progress feedback
     setIsSimulatingUpload(true);
@@ -92,7 +104,13 @@ export const UploadSection: React.FC<UploadSectionProps> = ({
   };
 
   const handleGenerate = () => {
-    onStartProcessing(selectedFile, selectedSample, targetDuration, customPrompt);
+    onStartProcessing(
+      selectedFile,
+      selectedSample,
+      targetDuration,
+      customPrompt,
+      fileDuration || undefined
+    );
   };
 
   return (

@@ -25,35 +25,60 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
   const [currentTime, setCurrentTime] = useState(clip.startTimestamp);
+  const [actualDuration, setActualDuration] = useState<number | null>(null);
+  const [hasError, setHasError] = useState(false);
 
   // Sync video bounds to startTimestamp & endTimestamp
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.currentTime = clip.startTimestamp;
+    if (videoRef.current && !hasError) {
+      const maxDur = actualDuration || videoRef.current.duration || clip.endTimestamp;
+      const safeStart = Math.min(clip.startTimestamp, Math.max(0, maxDur - 1));
+      try {
+        videoRef.current.currentTime = safeStart;
+      } catch (e) {
+        // Safe seek fail guard
+      }
     }
-  }, [clip.startTimestamp]);
+  }, [clip.startTimestamp, actualDuration, hasError]);
+
+  const handleLoadedMetadata = () => {
+    setHasError(false);
+    if (videoRef.current) {
+      const dur = videoRef.current.duration;
+      if (dur && !isNaN(dur) && dur > 0) {
+        setActualDuration(dur);
+        const safeStart = Math.min(clip.startTimestamp, Math.max(0, dur - 1));
+        videoRef.current.currentTime = safeStart;
+      }
+    }
+  };
 
   const handleTimeUpdate = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || hasError) return;
     const time = videoRef.current.currentTime;
-    setCurrentTime(time);
+    const maxDur = actualDuration || videoRef.current.duration || clip.endTimestamp;
 
+    setCurrentTime(time);
     if (onTimeUpdate) onTimeUpdate(time);
 
+    const safeStart = Math.min(clip.startTimestamp, Math.max(0, maxDur - 1));
+    const safeEnd = Math.min(clip.endTimestamp, maxDur);
+
     // Loop within startTimestamp and endTimestamp
-    if (time >= clip.endTimestamp || time < clip.startTimestamp - 0.5) {
-      videoRef.current.currentTime = clip.startTimestamp;
+    if (time >= safeEnd || time < safeStart - 1.0) {
+      videoRef.current.currentTime = safeStart;
     }
   };
 
   const togglePlay = () => {
-    if (!videoRef.current) return;
+    if (!videoRef.current || hasError) return;
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
     } else {
-      videoRef.current.play().catch(() => {});
-      setIsPlaying(true);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {
+        setIsPlaying(false);
+      });
     }
   };
 
@@ -111,7 +136,9 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
         src={videoUrl}
         muted={isMuted}
         playsInline
+        onLoadedMetadata={handleLoadedMetadata}
         onTimeUpdate={handleTimeUpdate}
+        onError={() => setHasError(true)}
         className="w-full h-full object-cover transition-all duration-300"
         style={{
           objectPosition: `${faceCoords.xPercent}% ${faceCoords.yPercent}%`,
