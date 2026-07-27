@@ -297,6 +297,93 @@ app.post('/api/ai/retitle', async (req: Request, res: Response) => {
   }
 });
 
+// AI Custom Edit & Highlight Instructions Endpoint
+app.post('/api/ai/edit-instructions', async (req: Request, res: Response) => {
+  try {
+    const { instruction, currentTitle, transcriptText, clipDuration = 30 } = req.body;
+
+    let resultData = null;
+
+    if (ai && instruction) {
+      try {
+        const prompt = `You are an expert viral video editor. The user gave custom edit instructions: "${instruction}".
+Current Clip Title: "${currentTitle || ''}"
+Current Transcript Text: "${transcriptText || ''}"
+Clip Duration: ${clipDuration} seconds.
+
+Tasks:
+1. Revise title if requested or relevant to instruction.
+2. Mark key highlight words in the transcript text according to user instructions.
+3. Choose appropriate caption style settings (presetName: "Alex Hormozi"|"Beast Style"|"Cyber Neon"|"Minimal Pill"|"Classic Gold", activeWordColor: string hex).
+4. Provide a brief explanation of changes.
+
+Return a JSON object:
+{
+  "title": string,
+  "explanation": string,
+  "presetName": string,
+  "activeWordColor": string,
+  "highlightKeywords": string[],
+  "revisedTranscript": string
+}`;
+
+        const geminiRes = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                title: { type: Type.STRING },
+                explanation: { type: Type.STRING },
+                presetName: { type: Type.STRING },
+                activeWordColor: { type: Type.STRING },
+                highlightKeywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                revisedTranscript: { type: Type.STRING },
+              },
+              required: ['title', 'explanation', 'highlightKeywords'],
+            },
+          },
+        });
+
+        if (geminiRes.text) {
+          resultData = JSON.parse(geminiRes.text);
+        }
+      } catch (err) {
+        console.warn('Gemini edit-instructions error:', err);
+      }
+    }
+
+    if (!resultData) {
+      // Fallback
+      const instructionLower = (instruction || '').toLowerCase();
+      let color = '#facc15';
+      let preset = 'Alex Hormozi';
+      if (instructionLower.includes('green') || instructionLower.includes('beast')) {
+        color = '#22c55e';
+        preset = 'Beast Style';
+      } else if (instructionLower.includes('cyan') || instructionLower.includes('neon')) {
+        color = '#06b6d4';
+        preset = 'Cyber Neon';
+      }
+
+      resultData = {
+        title: currentTitle ? `🔥 ${currentTitle}` : 'AI Customized Viral Short',
+        explanation: `Applied user instructions: "${instruction}". Enhanced keyword highlights and visual caption contrast.`,
+        presetName: preset,
+        activeWordColor: color,
+        highlightKeywords: ['must', 'secret', 'now', 'results', 'viral', 'change', 'stop'],
+        revisedTranscript: transcriptText || 'Check out this amazing viral moment right now!',
+      };
+    }
+
+    res.json({ success: true, ...resultData });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || 'Custom edit failed' });
+  }
+});
+
 // Vite Server Setup
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

@@ -193,29 +193,39 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
               : 'bottom-12'
           }`}
         >
-          <div className="inline-flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl max-w-[90%] mx-auto">
+          <div className="inline-flex flex-wrap items-center justify-center gap-2 px-3.5 py-2 rounded-2xl bg-black/70 backdrop-blur-md border border-white/10 shadow-2xl max-w-[95%] mx-auto">
             {visibleWordsChunk.map((w, idx) => {
               const isRelative = w.start <= clip.duration + 5;
               const timeToCheck = isRelative ? relativeTime : currentTime;
               const isActive = timeToCheck >= w.start && timeToCheck <= w.end;
+              const isKey = w.isKeyWord;
+
               return (
                 <span
                   key={idx}
                   style={{
                     fontFamily: clip.captionStyle.fontFamily || 'Montserrat, sans-serif',
                     color: isActive
-                      ? clip.captionStyle.activeWordColor
-                      : clip.captionStyle.textColor,
+                      ? clip.captionStyle.activeWordColor || '#facc15'
+                      : isKey
+                      ? '#fde047'
+                      : clip.captionStyle.textColor || '#ffffff',
                     fontSize: `${clip.captionStyle.fontSize || 26}px`,
-                    textShadow: '0 2px 8px rgba(0,0,0,0.9), 0 0 4px rgba(0,0,0,0.8)',
+                    textShadow: isActive
+                      ? `0 0 12px ${clip.captionStyle.activeWordColor || '#facc15'}, 0 2px 8px rgba(0,0,0,0.9)`
+                      : '0 2px 8px rgba(0,0,0,0.9)',
                   }}
-                  className={`font-extrabold transition-all duration-150 inline-block uppercase tracking-tight ${
-                    isActive ? 'scale-110 drop-shadow-md' : 'opacity-90'
+                  className={`font-extrabold transition-all duration-150 inline-flex items-center gap-1 uppercase tracking-tight px-1.5 py-0.5 rounded-lg ${
+                    isActive
+                      ? 'scale-115 bg-white/10 shadow-lg ring-2 ring-white/20'
+                      : isKey
+                      ? 'bg-amber-500/20 border border-amber-400/40 text-amber-300'
+                      : 'opacity-90'
                   }`}
                 >
-                  {w.word}
+                  <span>{w.word}</span>
                   {clip.captionStyle.showEmojis && w.emoji && (
-                    <span className="ml-1 text-base">{w.emoji}</span>
+                    <span className="text-base animate-bounce">{w.emoji}</span>
                   )}
                 </span>
               );
