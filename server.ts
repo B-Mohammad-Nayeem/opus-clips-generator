@@ -90,17 +90,188 @@ app.post('/api/upload', upload.single('video'), (req: Request, res: Response) =>
   }
 });
 
+/**
+ * Detailed logging utility to inspect raw Gemini API responses for video processing.
+ * Validates clip timestamps, transcript word mappings, and visual/audio alignment.
+ */
+function logGeminiVideoAnalysisResponse(source: string, rawText: string | null, clips: any[], totalVideoDuration: number) {
+  console.log(`\n==================================================`);
+  console.log(`[GEMINI ANALYSIS LOG] Source: ${source}`);
+  console.log(`==================================================`);
+
+  if (rawText) {
+    console.log(`[RAW RESPONSE JSON LENGTH]: ${rawText.length} chars`);
+    console.log(`[RAW RESPONSE PREVIEW]:\n${rawText.slice(0, 500)}${rawText.length > 500 ? '...' : ''}`);
+  }
+
+  console.log(`[CLIPS DETECTED]: ${clips.length}`);
+
+  clips.forEach((clip, idx) => {
+    const start = clip.startTimestamp ?? 0;
+    const end = clip.endTimestamp ?? 0;
+    const clipDur = Math.max(0, end - start);
+    const words: any[] = Array.isArray(clip.transcriptWords) ? clip.transcriptWords : [];
+
+    console.log(`\n--- Clip #${idx + 1}: "${clip.title || 'Untitled'}" ---`);
+    console.log(`  Category: ${clip.category || 'N/A'} | Viral Score: ${clip.viralScore || 'N/A'}`);
+    console.log(`  Timestamp Range: ${start}s -> ${end}s (Duration: ${clipDur}s / Video Total: ${totalVideoDuration}s)`);
+    console.log(`  Selection Reasoning: ${clip.selectionReasoning || 'None'}`);
+    console.log(`  Transcript Words Count: ${words.length}`);
+
+    if (words.length > 0) {
+      let isOrdered = true;
+      let outOfBoundsCount = 0;
+      let prevEnd = -1;
+
+      words.forEach((w) => {
+        if (typeof w.start === 'number' && w.start < prevEnd) isOrdered = false;
+        if (typeof w.start === 'number' && typeof w.end === 'number') {
+          if (w.start < start || w.end > end + 5) outOfBoundsCount++;
+          prevEnd = w.end;
+        }
+      });
+
+      console.log(`  Word Mapping Inspection:`);
+      console.log(`    - Chronological Alignment: ${isOrdered ? '✅ Valid' : '⚠️ Out of order'}`);
+      console.log(`    - Clip Time Window Match: ${outOfBoundsCount === 0 ? '✅ All words fit' : `⚠️ ${outOfBoundsCount} words out of bounds`}`);
+      console.log(`    - First 3 Words: ${words.slice(0, 3).map((w) => `"${w.word}" (${w.start}s-${w.end}s)`).join(', ')}`);
+      console.log(`    - Key Highlights: ${words.filter((w) => w.isKeyWord).map((w) => w.word).join(', ') || 'None marked'}`);
+    } else if (clip.sampleQuote) {
+      console.log(`  Sample Quote: "${clip.sampleQuote}"`);
+    }
+  });
+
+  console.log(`==================================================\n`);
+}
+
 // AI Video Analysis & Clip Generation Endpoint
 app.post('/api/process-video', async (req: Request, res: Response) => {
   try {
-    const { videoTitle, videoDuration, targetDuration = '30s', customPrompt } = req.body;
+    const { storedName, videoTitle, videoDuration, targetDuration = '30s', customPrompt } = req.body;
 
     const durationSec = typeof videoDuration === 'number' && videoDuration > 0 ? videoDuration : 180;
     const title = videoTitle || 'Uploaded Video Project';
 
-    let generatedClips = null;
+    let generatedClips: any[] | null = null;
 
-    if (ai) {
+    // 1. Try Gemini Files API for direct video/audio multimodal analysis if file on disk
+    if (ai && storedName) {
+      const filePath = path.join(uploadsDir, storedName);
+      if (fs.existsSync(filePath)) {
+        try {
+          console.log('Uploading video file to Gemini Files API for multimodal audio analysis...', storedName);
+          const uploadedFile = await ai.files.upload({
+            file: filePath,
+            config: {
+              mimeType: 'video/mp4',
+            },
+          });
+
+          // Wait if file is processing
+          let fileCheck = uploadedFile;
+          let attempts = 0;
+          while (fileCheck.state === 'PROCESSING' && attempts < 12) {
+            await new Promise((r) => setTimeout(r, 1500));
+            attempts++;
+            fileCheck = await ai.files.get({ name: uploadedFile.name });
+          }
+
+          if (fileCheck.state === 'ACTIVE') {
+            const videoPrompt = `You are an expert AI video editor and speech transcriber like Opus Clip / Munch.
+Analyze this video's spoken audio track and visual content.
+Requested clip target duration: ${targetDuration}.
+${customPrompt ? `User custom instructions: ${customPrompt}` : ''}
+
+Tasks:
+1. Listen carefully to the spoken audio and speech in this video.
+2. Select 3-5 top viral moments/clips based on high vocal emotion, strong hooks, or key insights.
+3. For EACH clip, provide startTimestamp and endTimestamp in seconds.
+4. For EACH clip, transcribe the EXACT spoken words in that clip into the "transcriptWords" array.
+Each item in "transcriptWords" must be:
+{
+  "word": "string (the exact spoken word)",
+  "start": number (timestamp in seconds),
+  "end": number (timestamp in seconds),
+  "isKeyWord": boolean (true for high impact/viral words),
+  "emoji": "optional emoji for key words"
+}
+
+Return a JSON array of clips matching the schema.`;
+
+            const geminiRes = await ai.models.generateContent({
+              model: 'gemini-3.6-flash',
+              contents: [fileCheck, videoPrompt],
+              config: {
+                responseMimeType: 'application/json',
+                responseSchema: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      title: { type: Type.STRING },
+                      summary: { type: Type.STRING },
+                      startTimestamp: { type: Type.NUMBER },
+                      endTimestamp: { type: Type.NUMBER },
+                      viralScore: { type: Type.INTEGER },
+                      hookScore: { type: Type.INTEGER },
+                      engagementScore: { type: Type.INTEGER },
+                      category: { type: Type.STRING },
+                      selectionReasoning: { type: Type.STRING },
+                      keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      hashtags: { type: Type.ARRAY, items: { type: Type.STRING } },
+                      sampleQuote: { type: Type.STRING },
+                      transcriptWords: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            word: { type: Type.STRING },
+                            start: { type: Type.NUMBER },
+                            end: { type: Type.NUMBER },
+                            isKeyWord: { type: Type.BOOLEAN },
+                            emoji: { type: Type.STRING },
+                          },
+                          required: ['word', 'start', 'end'],
+                        },
+                      },
+                    },
+                    required: [
+                      'title',
+                      'summary',
+                      'startTimestamp',
+                      'endTimestamp',
+                      'viralScore',
+                      'category',
+                      'selectionReasoning',
+                    ],
+                  },
+                },
+              },
+            });
+
+            // Cleanup Gemini file
+            try {
+              await ai.files.delete({ name: uploadedFile.name });
+            } catch (delErr) {
+              // ignore cleanup error
+            }
+
+            if (geminiRes.text) {
+              const parsed = JSON.parse(geminiRes.text);
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                generatedClips = parsed;
+                logGeminiVideoAnalysisResponse('Gemini Multimodal Files API (Video + Audio)', geminiRes.text, parsed, durationSec);
+              }
+            }
+          }
+        } catch (fileApiError) {
+          console.warn('Gemini Files API video analysis fallback:', fileApiError);
+        }
+      }
+    }
+
+    // 2. Fallback to Gemini Text Prompt analysis if file upload was skipped or failed
+    if (!generatedClips && ai) {
       try {
         const prompt = `You are the lead AI video editor for an app like Opus Clip.
 Analyze this video: "${title}" (Duration: ${durationSec} seconds).
@@ -108,7 +279,7 @@ Requested clip length target: ${targetDuration}.
 ${customPrompt ? `User custom instructions: ${customPrompt}` : ''}
 
 Task:
-Find 3-6 viral moments from this video. Return a strict JSON array of clip objects. Each object MUST contain:
+Find 3-5 viral moments from this video. Return a strict JSON array of clip objects. Each object MUST contain:
 - title: catchy clickbait/viral title with emojis
 - summary: short 1-sentence description
 - startTimestamp: start time in seconds (e.g. 10)
@@ -163,26 +334,27 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
           const parsed = JSON.parse(geminiRes.text);
           if (Array.isArray(parsed) && parsed.length > 0) {
             generatedClips = parsed;
+            logGeminiVideoAnalysisResponse('Gemini Text Prompt Metadata Analysis', geminiRes.text, parsed, durationSec);
           }
         }
       } catch (geminiError) {
-        console.warn('Gemini process-video error, using smart fallback:', geminiError);
+        console.warn('Gemini text process-video error:', geminiError);
       }
     }
 
-    // Fallback if Gemini key is missing or failed
+    // 3. Fallback if Gemini key is missing or failed
     if (!generatedClips) {
       generatedClips = [
         {
-          title: `Why ${title.slice(0, 20)} Will Change Everything! 🔥`,
+          title: `Why ${title.slice(0, 24)} Will Change Everything! 🔥`,
           summary: 'High energy opening hook with extreme audience engagement spike.',
           startTimestamp: Math.floor(durationSec * 0.08),
-          endTimestamp: Math.min(Math.floor(durationSec * 0.08) + 30, durationSec - 5),
+          endTimestamp: Math.min(Math.floor(durationSec * 0.08) + 25, durationSec - 5),
           viralScore: 98,
           hookScore: 99,
           engagementScore: 96,
           category: 'Controversial',
-          selectionReasoning: 'Dramatic vocal emphasis and immediate hook statement at 00:15 creates high retention.',
+          selectionReasoning: `Strong verbal opening hook from "${title}" with immediate dramatic retention probability.`,
           keywords: ['Viral Clip', 'AI Hook', 'High Retention', 'Top Moment'],
           hashtags: ['#viral', '#shorts', '#reels', '#trending', '#opusclip'],
           sampleQuote: 'This is the number one mistake people make when creating content.',
@@ -191,7 +363,7 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
           title: 'The Uncomfortable Secret Nobody Mentions 💡',
           summary: 'Deep analytical insight with clear value proposition.',
           startTimestamp: Math.floor(durationSec * 0.35),
-          endTimestamp: Math.min(Math.floor(durationSec * 0.35) + 45, durationSec - 5),
+          endTimestamp: Math.min(Math.floor(durationSec * 0.35) + 30, durationSec - 5),
           viralScore: 94,
           hookScore: 92,
           engagementScore: 95,
@@ -205,7 +377,7 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
           title: 'You Won’t Believe What Happened Next! 🤯',
           summary: 'Unpredictable story transition with explosive reaction.',
           startTimestamp: Math.floor(durationSec * 0.65),
-          endTimestamp: Math.min(Math.floor(durationSec * 0.65) + 30, durationSec - 5),
+          endTimestamp: Math.min(Math.floor(durationSec * 0.65) + 25, durationSec - 5),
           viralScore: 91,
           hookScore: 95,
           engagementScore: 89,
@@ -216,6 +388,7 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
           sampleQuote: 'In four seconds, the entire outcome completely shifted.',
         },
       ];
+      logGeminiVideoAnalysisResponse('Smart Fallback Engine', null, generatedClips, durationSec);
     }
 
     // Ensure all timestamps are strictly valid within [0, durationSec]
@@ -235,6 +408,8 @@ Find 3-6 viral moments from this video. Return a strict JSON array of clip objec
         endTimestamp: Math.ceil(end),
       };
     });
+
+    logGeminiVideoAnalysisResponse('Final Sanitized Output', null, sanitizedClips, durationSec);
 
     res.json({
       success: true,

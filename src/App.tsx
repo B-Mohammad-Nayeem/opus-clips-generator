@@ -65,6 +65,8 @@ export default function App() {
       }
     }
 
+    let storedName: string | undefined;
+
     if (file) {
       try {
         const formData = new FormData();
@@ -75,6 +77,7 @@ export default function App() {
         });
         if (res.ok) {
           const data = await res.json();
+          storedName = data.storedName;
           if (data.videoUrl && !blobUrl) {
             videoUrl = data.videoUrl;
           }
@@ -89,38 +92,13 @@ export default function App() {
 
     let rawClips: any[] | null = null;
 
-    // Run real Web Audio API volume peak & energy analysis on uploaded video audio track
-    try {
-      const audioAnalysis = await analyzeVideoAudio(file || videoUrl, targetDuration);
-      if (audioAnalysis && audioAnalysis.speechSegments.length > 0) {
-        if (audioAnalysis.duration > 0) {
-          duration = audioAnalysis.duration;
-        }
-        rawClips = audioAnalysis.speechSegments.map((seg, idx) => ({
-          title: seg.title,
-          summary: seg.summary,
-          startTimestamp: seg.startTimestamp,
-          endTimestamp: seg.endTimestamp,
-          viralScore: seg.peakEnergy,
-          hookScore: Math.min(99, seg.peakEnergy + 2),
-          engagementScore: Math.min(99, seg.peakEnergy - 1),
-          category: seg.category,
-          selectionReasoning: `Audio track energy analysis: Detected RMS volume burst with peak pitch inflection at ${Math.floor(seg.startTimestamp / 60)}:${String(seg.startTimestamp % 60).padStart(2, '0')}.`,
-          keywords: ['Audio Peak', 'AI Short', 'Top Moment'],
-          hashtags: ['#viral', '#shorts', '#opusclip', '#audiotrack'],
-          transcriptWords: seg.transcriptWords,
-        }));
-      }
-    } catch (audioErr) {
-      console.warn('Web Audio track analysis fallback:', audioErr);
-    }
-
-    // Call backend processing endpoint as secondary enhancement
+    // 1. Primary: Call Gemini API backend processing endpoint with storedName for real multimodal speech transcription & video analysis
     try {
       const apiRes = await fetch('/api/process-video', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          storedName,
           videoTitle: title,
           videoDuration: duration,
           targetDuration,
@@ -129,12 +107,40 @@ export default function App() {
       });
       if (apiRes.ok) {
         const apiData = await apiRes.json();
-        if (!rawClips && apiData.clips && Array.isArray(apiData.clips) && apiData.clips.length > 0) {
+        if (apiData.clips && Array.isArray(apiData.clips) && apiData.clips.length > 0) {
           rawClips = apiData.clips;
         }
       }
     } catch (err) {
       console.warn('Process video network/server warning:', err);
+    }
+
+    // 2. Secondary Fallback: Web Audio API RMS energy peak detection if server response was unavailable
+    if (!rawClips || rawClips.length === 0) {
+      try {
+        const audioAnalysis = await analyzeVideoAudio(file || videoUrl, targetDuration);
+        if (audioAnalysis && audioAnalysis.speechSegments.length > 0) {
+          if (audioAnalysis.duration > 0) {
+            duration = audioAnalysis.duration;
+          }
+          rawClips = audioAnalysis.speechSegments.map((seg, idx) => ({
+            title: seg.title,
+            summary: seg.summary,
+            startTimestamp: seg.startTimestamp,
+            endTimestamp: seg.endTimestamp,
+            viralScore: seg.peakEnergy,
+            hookScore: Math.min(99, seg.peakEnergy + 2),
+            engagementScore: Math.min(99, seg.peakEnergy - 1),
+            category: seg.category,
+            selectionReasoning: `Audio track energy analysis: Detected vocal volume burst with peak pitch inflection at ${Math.floor(seg.startTimestamp / 60)}:${String(seg.startTimestamp % 60).padStart(2, '0')}.`,
+            keywords: ['Audio Peak', 'AI Short', 'Top Moment'],
+            hashtags: ['#viral', '#shorts', '#opusclip', '#audiotrack'],
+            transcriptWords: seg.transcriptWords,
+          }));
+        }
+      } catch (audioErr) {
+        console.warn('Web Audio track analysis fallback:', audioErr);
+      }
     }
 
     // Smart fallback clips generator if rawClips is missing

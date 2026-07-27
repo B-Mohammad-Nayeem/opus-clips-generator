@@ -191,3 +191,90 @@ export async function analyzeVideoAudio(
     speechSegments,
   };
 }
+
+/**
+ * Re-aligns transcript word timestamps with actual audio amplitude onset peaks in the video segment.
+ */
+export async function realignTranscriptToAudioPeaks<T extends { word: string; start: number; end: number }>(
+  videoSource: File | string,
+  transcriptWords: T[],
+  clipStartOffset: number = 0,
+  clipDuration: number = 30
+): Promise<T[]> {
+  if (!transcriptWords || transcriptWords.length === 0) return [];
+
+  const energyOnsets: number[] = [];
+
+  try {
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    let arrayBuffer: ArrayBuffer;
+
+    if (typeof videoSource === 'string') {
+      const response = await fetch(videoSource);
+      arrayBuffer = await response.arrayBuffer();
+    } else {
+      arrayBuffer = await videoSource.arrayBuffer();
+    }
+
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const sampleRate = audioBuffer.sampleRate;
+    const channelData = audioBuffer.getChannelData(0);
+
+    // Frame size: 50ms windows for precise vocal onset detection
+    const frameSize = Math.floor(sampleRate * 0.05);
+    const clipStartSample = Math.floor(clipStartOffset * sampleRate);
+    const clipEndSample = Math.min(channelData.length, Math.floor((clipStartOffset + clipDuration) * sampleRate));
+
+    let prevRms = 0;
+    for (let i = clipStartSample; i < clipEndSample; i += frameSize) {
+      let sum = 0;
+      const end = Math.min(i + frameSize, channelData.length);
+      for (let j = i; j < end; j++) {
+        sum += channelData[j] * channelData[j];
+      }
+      const rms = Math.sqrt(sum / (end - i));
+      const relTime = (i - clipStartSample) / sampleRate;
+
+      // Onset detection: amplitude jump above noise floor
+      if (rms > 0.03 && rms > prevRms * 1.4) {
+        energyOnsets.push(Math.round(relTime * 10) / 10);
+      }
+      prevRms = rms;
+    }
+  } catch (err) {
+    console.warn('Audio decoding for onset alignment fallback:', err);
+  }
+
+  const totalChars = transcriptWords.reduce((acc, w) => acc + w.word.length, 0) || 1;
+  let currentStart = 0;
+
+  const realigned = transcriptWords.map((w): T => {
+    const charRatio = w.word.length / totalChars;
+    const idealDuration = Math.max(0.2, Math.min(2.5, charRatio * clipDuration * 1.2));
+
+    let bestStart = currentStart;
+
+    if (energyOnsets.length > 0) {
+      const candidateOnset = energyOnsets.find(
+        (onset) => Math.abs(onset - currentStart) <= 1.2 && onset >= currentStart - 0.2
+      );
+      if (candidateOnset !== undefined) {
+        bestStart = candidateOnset;
+      }
+    }
+
+    const bestEnd = Math.round((bestStart + idealDuration) * 10) / 10;
+    currentStart = Math.min(clipDuration - 0.1, bestEnd + 0.05);
+
+    return {
+      ...w,
+      start: Math.round(bestStart * 10) / 10,
+      end: Math.min(clipDuration, bestEnd),
+    };
+  });
+
+
+  return realigned;
+}
+
+

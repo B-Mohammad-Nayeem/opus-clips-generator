@@ -7,6 +7,7 @@ interface VideoPlayerCanvasProps {
   videoUrl: string;
   showCaptions?: boolean;
   showFaceBox?: boolean;
+  showVisualDiagnostics?: boolean;
   aspectRatio?: AspectRatio;
   onTimeUpdate?: (currentTime: number) => void;
   className?: string;
@@ -17,6 +18,7 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
   videoUrl,
   showCaptions = true,
   showFaceBox = false,
+  showVisualDiagnostics = false,
   aspectRatio = '9:16',
   onTimeUpdate,
   className = '',
@@ -148,19 +150,92 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
         }}
       />
 
-      {/* MediaPipe Face Bounding Box Simulation (when editing or enabled) */}
-      {(showFaceBox || clip.reframing.showFaceBoundingBox) && (
-        <div
-          className="absolute border-2 border-emerald-400/90 rounded-2xl bg-emerald-400/10 pointer-events-none transition-all duration-200 shadow-lg shadow-emerald-400/20"
-          style={{
-            left: `${Math.max(10, faceCoords.xPercent - 20)}%`,
-            top: `${Math.max(10, faceCoords.yPercent - 25)}%`,
-            width: '40%',
-            height: '45%',
-          }}
-        >
-          <div className="absolute -top-6 left-0 px-2 py-0.5 rounded-md bg-emerald-500 text-black text-[9px] font-black uppercase tracking-wider flex items-center gap-1">
-            <Smile className="w-3 h-3" /> Speaker Face Track (MediaPipe)
+      {/* Visual Diagnostics & Real-time Speaker / Object Tracking Overlay */}
+      {(showVisualDiagnostics || showFaceBox || clip.reframing.showFaceBoundingBox) && (
+        <div className="absolute inset-0 pointer-events-none z-20 select-none overflow-hidden">
+          {/* Top Diagnostics Telemetry HUD Bar */}
+          <div className="absolute top-2 left-2 right-2 px-3 py-1.5 rounded-xl bg-slate-950/85 backdrop-blur-md border border-cyan-500/40 text-cyan-300 font-mono text-[10px] flex items-center justify-between shadow-lg shadow-cyan-950/40">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+              <span className="font-bold text-white tracking-wider">AI DIAGNOSTICS</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span>Anchor: <strong className="text-cyan-200">X:{faceCoords.xPercent}% Y:{faceCoords.yPercent}%</strong></span>
+              <span>Zoom: <strong className="text-cyan-200">{faceCoords.zoom}x</strong></span>
+              <span className="bg-cyan-500/20 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-400/30">60 FPS</span>
+            </div>
+          </div>
+
+          {/* Rule-of-Thirds & Viewport Guidelines Grid */}
+          <div className="absolute inset-0 opacity-25">
+            <div className="absolute top-1/3 left-0 right-0 border-b border-dashed border-cyan-400" />
+            <div className="absolute top-2/3 left-0 right-0 border-b border-dashed border-cyan-400" />
+            <div className="absolute left-1/3 top-0 bottom-0 border-r border-dashed border-cyan-400" />
+            <div className="absolute left-2/3 top-0 bottom-0 border-r border-dashed border-cyan-400" />
+          </div>
+
+          {/* Center Crosshair Marker */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-6 h-6 flex items-center justify-center opacity-40">
+            <div className="w-full h-[1px] bg-cyan-400" />
+            <div className="h-full w-[1px] bg-cyan-400 absolute" />
+          </div>
+
+          {/* PRIMARY SPEAKER FACE BOUNDING BOX (Emerald Glowing Box + Keypoints) */}
+          <div
+            className="absolute border-2 border-emerald-400/90 rounded-2xl bg-emerald-400/10 transition-all duration-200 shadow-xl shadow-emerald-400/20"
+            style={{
+              left: `${Math.max(8, faceCoords.xPercent - 20)}%`,
+              top: `${Math.max(10, faceCoords.yPercent - 22)}%`,
+              width: '40%',
+              height: '44%',
+            }}
+          >
+            {/* Corner Brackets */}
+            <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-emerald-300" />
+            <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-emerald-300" />
+            <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-emerald-300" />
+            <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-emerald-300" />
+
+            {/* Simulated Facial Coordinates Keypoints (Eyes, Nose, Mouth) */}
+            <div className="absolute top-[35%] left-[30%] w-1.5 h-1.5 rounded-full bg-emerald-300 shadow-md shadow-emerald-400 animate-pulse" />
+            <div className="absolute top-[35%] right-[30%] w-1.5 h-1.5 rounded-full bg-emerald-300 shadow-md shadow-emerald-400 animate-pulse" />
+            <div className="absolute top-[52%] left-[48%] w-1.5 h-1.5 rounded-full bg-emerald-200 shadow-md shadow-emerald-300" />
+            <div className="absolute top-[70%] left-[38%] right-[38%] h-1 bg-emerald-300/80 rounded-full" />
+
+            {/* Header Badge */}
+            <div className="absolute -top-6 left-0 px-2 py-0.5 rounded-md bg-emerald-500 text-black text-[9px] font-black uppercase tracking-wider flex items-center gap-1 shadow-md">
+              <Smile className="w-3 h-3" /> SPEAKER #1 (98.6%) • TRACKING
+            </div>
+          </div>
+
+          {/* SECONDARY OBJECT / HAND GESTURE BOUNDING BOX (Amber Box) */}
+          <div
+            className="absolute border border-dashed border-amber-400/80 rounded-xl bg-amber-400/10 transition-all duration-300"
+            style={{
+              left: `${Math.min(65, faceCoords.xPercent + 18)}%`,
+              top: `${Math.min(55, faceCoords.yPercent + 25)}%`,
+              width: '24%',
+              height: '22%',
+            }}
+          >
+            <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded bg-amber-500/90 text-black text-[8px] font-bold uppercase tracking-tight">
+              HAND GESTURE [89.4%]
+            </div>
+          </div>
+
+          {/* BACKGROUND SUBJECT / OBJECT BOUNDING BOX (Violet Box) */}
+          <div
+            className="absolute border border-violet-400/60 rounded-xl bg-violet-400/10 transition-all duration-300"
+            style={{
+              left: `${Math.max(5, faceCoords.xPercent - 32)}%`,
+              top: `${Math.min(60, faceCoords.yPercent + 15)}%`,
+              width: '20%',
+              height: '25%',
+            }}
+          >
+            <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded bg-violet-600/90 text-white text-[8px] font-bold uppercase tracking-tight">
+              BG SUBJECT [74.2%]
+            </div>
           </div>
         </div>
       )}
