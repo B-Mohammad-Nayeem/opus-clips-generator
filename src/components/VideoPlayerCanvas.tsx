@@ -96,9 +96,11 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
   const relativeTime = currentTime - clip.startTimestamp;
 
   // Find active word or group of words for subtitle display
-  const activeWordIndex = currentWords.findIndex(
-    (w) => relativeTime >= w.start && relativeTime <= w.end
-  );
+  const activeWordIndex = currentWords.findIndex((w) => {
+    const isRelative = w.start <= clip.duration + 5;
+    const timeToCheck = isRelative ? relativeTime : currentTime;
+    return timeToCheck >= w.start && timeToCheck <= w.end;
+  });
 
   // Get active subtitle chunk (e.g. 3-4 words around active word)
   let visibleWordsChunk = currentWords;
@@ -193,7 +195,9 @@ export const VideoPlayerCanvas: React.FC<VideoPlayerCanvasProps> = ({
         >
           <div className="inline-flex flex-wrap items-center justify-center gap-1.5 px-3 py-1.5 rounded-2xl bg-black/60 backdrop-blur-md border border-white/10 shadow-2xl max-w-[90%] mx-auto">
             {visibleWordsChunk.map((w, idx) => {
-              const isActive = relativeTime >= w.start && relativeTime <= w.end;
+              const isRelative = w.start <= clip.duration + 5;
+              const timeToCheck = isRelative ? relativeTime : currentTime;
+              const isActive = timeToCheck >= w.start && timeToCheck <= w.end;
               return (
                 <span
                   key={idx}

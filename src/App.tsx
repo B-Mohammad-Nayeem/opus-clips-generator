@@ -10,6 +10,7 @@ import { BrandKitModal } from './components/BrandKitModal';
 import { ExportModal } from './components/ExportModal';
 import { VideoProject, Clip, ExportJob } from './types';
 import { SAMPLE_VIDEOS } from './data/sampleVideos';
+import { analyzeVideoAudio } from './utils/audioAnalyzer';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<NavTab>('upload');
@@ -88,7 +89,33 @@ export default function App() {
 
     let rawClips: any[] | null = null;
 
-    // Call backend processing endpoint
+    // Run real Web Audio API volume peak & energy analysis on uploaded video audio track
+    try {
+      const audioAnalysis = await analyzeVideoAudio(file || videoUrl, targetDuration);
+      if (audioAnalysis && audioAnalysis.speechSegments.length > 0) {
+        if (audioAnalysis.duration > 0) {
+          duration = audioAnalysis.duration;
+        }
+        rawClips = audioAnalysis.speechSegments.map((seg, idx) => ({
+          title: seg.title,
+          summary: seg.summary,
+          startTimestamp: seg.startTimestamp,
+          endTimestamp: seg.endTimestamp,
+          viralScore: seg.peakEnergy,
+          hookScore: Math.min(99, seg.peakEnergy + 2),
+          engagementScore: Math.min(99, seg.peakEnergy - 1),
+          category: seg.category,
+          selectionReasoning: `Audio track energy analysis: Detected RMS volume burst with peak pitch inflection at ${Math.floor(seg.startTimestamp / 60)}:${String(seg.startTimestamp % 60).padStart(2, '0')}.`,
+          keywords: ['Audio Peak', 'AI Short', 'Top Moment'],
+          hashtags: ['#viral', '#shorts', '#opusclip', '#audiotrack'],
+          transcriptWords: seg.transcriptWords,
+        }));
+      }
+    } catch (audioErr) {
+      console.warn('Web Audio track analysis fallback:', audioErr);
+    }
+
+    // Call backend processing endpoint as secondary enhancement
     try {
       const apiRes = await fetch('/api/process-video', {
         method: 'POST',
@@ -102,7 +129,7 @@ export default function App() {
       });
       if (apiRes.ok) {
         const apiData = await apiRes.json();
-        if (apiData.clips && Array.isArray(apiData.clips) && apiData.clips.length > 0) {
+        if (!rawClips && apiData.clips && Array.isArray(apiData.clips) && apiData.clips.length > 0) {
           rawClips = apiData.clips;
         }
       }
@@ -187,19 +214,21 @@ export default function App() {
       if (clipEnd <= clipStart) clipEnd = Math.min(duration, clipStart + 15);
       const clipDur = Math.max(5, clipEnd - clipStart);
 
-      const quote =
-        c.sampleQuote || c.title || 'Check out this amazing viral moment!';
-      const words = quote.split(/\s+/).filter(Boolean);
-      const wordStep = clipDur / Math.max(1, words.length);
-
-      const generatedWords = words.map((w: string, wIdx: number) => ({
-        word: w,
-        start: Math.round(wIdx * wordStep * 10) / 10,
-        end: Math.round((wIdx + 1) * wordStep * 10) / 10,
-        speaker: 'Speaker 1',
-        confidence: 0.99,
-        emoji: wIdx === words.length - 1 ? '🔥' : wIdx === 0 ? '⚡' : undefined,
-      }));
+      const generatedWords = c.transcriptWords && Array.isArray(c.transcriptWords) && c.transcriptWords.length > 0
+        ? c.transcriptWords
+        : (() => {
+            const quote = c.sampleQuote || c.title || 'Check out this amazing viral moment!';
+            const words = quote.split(/\s+/).filter(Boolean);
+            const wordStep = clipDur / Math.max(1, words.length);
+            return words.map((w: string, wIdx: number) => ({
+              word: w,
+              start: Math.round(wIdx * wordStep * 10) / 10,
+              end: Math.round((wIdx + 1) * wordStep * 10) / 10,
+              speaker: 'Speaker 1',
+              confidence: 0.99,
+              emoji: wIdx === words.length - 1 ? '🔥' : wIdx === 0 ? '⚡' : undefined,
+            }));
+          })();
 
       return {
         id: `clip-${Date.now()}-${index}`,
