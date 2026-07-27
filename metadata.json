@@ -1,0 +1,6 @@
+{
+  "name": "OpusClip AI - Short Video Generator",
+  "description": "AI-powered short video generator that transcribes, detects viral moments, auto-reframes to 9:16, generates animated captions, and provides a multi-track clip editor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
